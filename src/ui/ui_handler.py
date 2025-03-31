@@ -7,6 +7,7 @@ import json
 import time
 import logging
 import traceback
+import datetime  # 添加datetime模块导入
 from datetime import datetime, timedelta
 from PyQt5.QtCore import QUrl, QTimer, QObject, Qt
 from PyQt5.QtWidgets import QFileDialog, QTableWidgetItem, QPushButton, QMessageBox, QApplication
@@ -20,29 +21,45 @@ from src.scanner.scanner_pool import ScannerPool
 from src.scanner.scanner_thread import clear_ohlcv_cache, clear_invalid_symbols
 
 def setup_event_handlers(window):
-    """设置UI组件的事件处理"""
-    # 连接开始扫描按钮
-    window.scan_long_button.clicked.connect(lambda: scan_long_signals(window))
-    window.scan_short_button.clicked.connect(lambda: scan_short_signals(window))
-    window.start_scan_button.clicked.connect(lambda: start_scanning(window))
-    
-    # 连接API设置
-    window.apply_api_button.clicked.connect(lambda: apply_api_settings(window))
-    window.save_api_button.clicked.connect(lambda: save_api_settings(window))
-    
-    # 连接交易所变更事件
-    window.exchange_combo.currentTextChanged.connect(lambda: exchange_changed(window))
-    window.market_type_combo.currentTextChanged.connect(lambda: market_type_changed(window))
-    
-    # 连接按钮
-    window.connect_button.clicked.connect(lambda: connect_to_exchange(window))
-    window.clear_cache_button.clicked.connect(lambda: clear_cache(window))
-    
-    # 连接清除信号表和日志的按钮
-    window.clear_long_signals_button.clicked.connect(lambda: clear_signals_table(window, True))
-    window.clear_short_signals_button.clicked.connect(lambda: clear_signals_table(window, False))
-    window.clear_long_log_button.clicked.connect(lambda: clear_signals_log(window, True))
-    window.clear_short_log_button.clicked.connect(lambda: clear_signals_log(window, False))
+    """设置事件处理器"""
+    try:
+        # 连接按钮点击事件
+        window.connect_button.clicked.connect(lambda: connect_to_exchange(window))
+        window.scan_long_button.clicked.connect(lambda: scan_long_signals(window))
+        window.scan_short_button.clicked.connect(lambda: scan_short_signals(window))
+        window.start_scan_button.clicked.connect(lambda: start_scanning(window))
+        window.test_case_button.clicked.connect(lambda: run_test_case(window))
+        window.clear_cache_button.clicked.connect(lambda: clear_cache(window))
+        
+        # 连接交易信号表格按钮事件
+        window.clear_long_signals_button.clicked.connect(lambda: clear_signals_table(window, is_long=True))
+        window.clear_short_signals_button.clicked.connect(lambda: clear_signals_table(window, is_long=False))
+        window.clear_long_log_button.clicked.connect(lambda: clear_signals_log(window, is_long=True))
+        window.clear_short_log_button.clicked.connect(lambda: clear_signals_log(window, is_long=False))
+        
+        # 连接推送功能相关按钮
+        window.add_push_symbol_button.clicked.connect(lambda: add_push_symbol(window))
+        window.clear_push_list_button.clicked.connect(lambda: clear_push_symbols(window))
+        window.test_push_button.clicked.connect(lambda: test_push_notification(window))
+        window.toggle_push_button.clicked.connect(lambda: toggle_push_notification(window))
+        
+        # 连接推送交易对下拉框的回车键事件和当前项变更事件
+        window.push_symbol_combo.lineEdit().returnPressed.connect(lambda: add_push_symbol(window))
+        
+        # 初始化推送相关变量
+        window.push_enabled = False
+        window.push_symbols = []
+        
+        # 连接选择框改变事件
+        window.exchange_combo.currentIndexChanged.connect(lambda: exchange_changed(window))
+        window.market_type_combo.currentIndexChanged.connect(lambda: market_type_changed(window))
+        window.perpetual_only_checkbox.stateChanged.connect(lambda: perpetual_only_changed(window))
+        
+        # 处理窗口关闭事件
+        window.closeEvent = lambda event: handle_close_event(window, event)
+    except Exception as e:
+        window.log_text.append(f"设置事件处理器时出错: {str(e)}")
+        traceback.print_exc()
 
 def auto_connect(window):
     """自动连接到交易所"""
@@ -305,7 +322,7 @@ def connect_to_exchange(window):
             window.log_text.append("连接交易所成功，已自动更新可用币种列表")
             
             return True
-        except Exception as e:
+    except Exception as e:
             window.log_text.append(f"连接测试失败: {str(e)}")
             window.is_connected = False
             window.connection_status_label.setText("未连接")
@@ -335,33 +352,35 @@ def save_api_settings(window):
         window.log_text.append(f"保存API设置时出错: {str(e)}")
 
 def update_coin_filter_list(window):
-    """更新币种筛选下拉框"""
+    """更新币种筛选下拉列表"""
     try:
-        # 保存当前选中的值
-        current_text = window.coin_filter_combo.currentText()
-        
-        # 清空现有下拉选项
-        window.coin_filter_combo.clear()
-        
-        # 添加"全部"选项
-        window.coin_filter_combo.addItem("全部")
-        
         # 如果没有可用的交易对，直接返回
         if not hasattr(window, 'symbols') or not window.symbols:
-            window.coin_filter_combo.setCurrentText(current_text)
+            window.log_text.append("没有可用的交易对")
             return
         
-        # 提取所有币种
+        # 保存当前选择的筛选条件
+        current_text = window.coin_filter_combo.currentText()
+        
+        # 先清空列表，但保留"全部"选项
+        window.coin_filter_combo.clear()
+        window.coin_filter_combo.addItem("全部")
+        
+        # 同时清空推送筛选下拉框，但保留"全部"选项
+        window.push_symbol_combo.clear()
+        window.push_symbol_combo.addItem("全部")
+        
+        # 提取所有交易对的基础币种
         coins = set()
         for symbol in window.symbols:
-            # 从交易对中提取基础币种
             if '/' in symbol:
                 base_coin = symbol.split('/')[0]
                 coins.add(base_coin)
         
-        # 添加到下拉框
+        # 添加到币种筛选下拉框
         for coin in sorted(coins):
             window.coin_filter_combo.addItem(coin)
+            window.push_symbol_combo.addItem(coin)  # 同时添加到推送筛选下拉框
         
         # 尝试恢复之前的选择，如果不存在则选择"全部"
         index = window.coin_filter_combo.findText(current_text)
@@ -681,6 +700,10 @@ def handle_signal_found(window, symbol, data, is_long=None):
             window.long_signals_log.append(log_text)
         else:
             window.short_signals_log.append(log_text)
+            
+        # 检查是否需要推送通知
+        if hasattr(window, 'push_enabled') and window.push_enabled:
+            check_and_push_notification(window, symbol, signal_type, data)
         
     except Exception as e:
         window.log_text.append(f"处理信号时出错: {str(e)}")
@@ -1040,6 +1063,177 @@ def remove_signal_row(window, table, row):
             window.log_text.append(f"已删除{signal_type}信号记录: {symbol}")
     except Exception as e:
         window.log_text.append(f"删除信号记录时出错: {str(e)}")
+        traceback.print_exc()
+
+def add_push_symbol(window):
+    """添加推送交易对到列表"""
+    try:
+        # 获取输入的交易对
+        symbol = window.push_symbol_combo.currentText().strip().upper()
+        
+        # 验证输入
+        if not symbol or symbol == "全部":
+            window.log_text.append("请选择或输入要添加的交易对")
+            return
+            
+        # 检查是否已存在
+        if symbol in window.push_symbols:
+            window.log_text.append(f"交易对 {symbol} 已在推送列表中")
+            return
+            
+        # 添加到内部列表
+        window.push_symbols.append(symbol)
+        
+        # 添加到表格
+        row_position = window.push_symbols_table.rowCount()
+        window.push_symbols_table.insertRow(row_position)
+        
+        # 添加交易对名称
+        window.push_symbols_table.setItem(row_position, 0, QTableWidgetItem(symbol))
+        
+        # 添加删除按钮
+        delete_button = QPushButton("删除")
+        delete_button.clicked.connect(lambda: remove_push_symbol(window, symbol, row_position))
+        window.push_symbols_table.setCellWidget(row_position, 1, delete_button)
+        
+        # 清空输入框/重置下拉框
+        window.push_symbol_combo.setCurrentIndex(0)  # 重置为"全部"
+        
+        window.log_text.append(f"已添加交易对 {symbol} 到推送列表")
+    except Exception as e:
+        window.log_text.append(f"添加推送交易对时出错: {str(e)}")
+        traceback.print_exc()
+
+def remove_push_symbol(window, symbol, row):
+    """从推送列表中删除交易对"""
+    try:
+        # 从内部列表中删除
+        if symbol in window.push_symbols:
+            window.push_symbols.remove(symbol)
+        
+        # 从表格中删除
+        window.push_symbols_table.removeRow(row)
+        
+        window.log_text.append(f"已从推送列表中删除交易对 {symbol}")
+    except Exception as e:
+        window.log_text.append(f"删除推送交易对时出错: {str(e)}")
+        traceback.print_exc()
+
+def clear_push_symbols(window):
+    """清空推送交易对列表"""
+    try:
+        # 清空内部列表
+        window.push_symbols = []
+        
+        # 清空表格
+        window.push_symbols_table.setRowCount(0)
+        
+        window.log_text.append("已清空推送交易对列表")
+    except Exception as e:
+        window.log_text.append(f"清空推送交易对列表时出错: {str(e)}")
+        traceback.print_exc()
+
+def toggle_push_notification(window):
+    """切换推送通知状态"""
+    try:
+        window.push_enabled = window.toggle_push_button.isChecked()
+        
+        if window.push_enabled:
+            window.toggle_push_button.setText("停用推送")
+            window.log_text.append("信号推送已启用")
+            
+            # 如果列表为空，提示添加
+            if not window.push_symbols:
+                window.log_text.append("推送列表为空，请添加要推送的交易对")
+        else:
+            window.toggle_push_button.setText("启用推送")
+            window.log_text.append("信号推送已停用")
+    except Exception as e:
+        window.log_text.append(f"切换推送状态时出错: {str(e)}")
+        traceback.print_exc()
+
+def test_push_notification(window):
+    """测试推送通知"""
+    try:
+        if not window.push_symbols:
+            window.log_text.append("推送列表为空，请先添加要推送的交易对")
+            return
+            
+        # 创建测试数据
+        test_data = {
+            'close': 50000.0,
+            'ma7': 49000.0,
+            'ma25': 48000.0,
+            'ma99': 45000.0,
+            'timestamp': datetime.now()
+        }
+        
+        # 发送测试推送
+        for symbol in window.push_symbols:
+            send_push_notification(window, symbol, "测试", test_data)
+            
+        window.log_text.append(f"已发送测试推送通知，共 {len(window.push_symbols)} 个交易对")
+    except Exception as e:
+        window.log_text.append(f"测试推送通知时出错: {str(e)}")
+        traceback.print_exc()
+
+def check_and_push_notification(window, symbol, signal_type, data):
+    """检查是否需要推送通知并执行推送"""
+    try:
+        # 提取基础币种名称
+        base_coin = None
+        if '/' in symbol:
+            base_coin = symbol.split('/')[0]
+        elif symbol.endswith('USDT'):
+            base_coin = symbol[:-4]
+        else:
+            base_coin = symbol
+            
+        # 检查触发的交易对是否在推送列表中
+        if base_coin in window.push_symbols:
+            # 如果在推送列表中，推送所有列表中的交易对
+            window.log_text.append(f"交易对 {symbol} 在推送列表中，推送所有关注的交易对信号")
+            
+            # 推送所有关注的交易对
+            for push_symbol in window.push_symbols:
+                send_push_notification(window, push_symbol, signal_type, data)
+    except Exception as e:
+        window.log_text.append(f"检查推送通知时出错: {str(e)}")
+        traceback.print_exc()
+
+def send_push_notification(window, symbol, signal_type, data):
+    """发送推送通知"""
+    try:
+        # 构建通知标题和内容
+        price = data['close']
+        ma7 = data['ma7']
+        ma25 = data['ma25']
+        timestamp = data['timestamp'].strftime('%H:%M:%S') if hasattr(data['timestamp'], 'strftime') else str(data['timestamp'])
+        
+        title = f"{symbol} {signal_type}信号触发"
+        message = f"价格: {price:.4f}\nMA7: {ma7:.4f}\nMA25: {ma25:.4f}\n时间: {timestamp}"
+        
+        # 直接显示消息框而不使用QTimer
+        msg_box = QMessageBox()
+        msg_box.setWindowTitle(title)
+        msg_box.setText(message)
+        msg_box.setIcon(QMessageBox.Information)
+        
+        # 确保窗口显示在最前面
+        msg_box.setWindowFlags(msg_box.windowFlags() | Qt.WindowStaysOnTopHint)
+        
+        # 使用exec_()方法直接显示模态对话框
+        # 由于是测试环境，我们使用非阻塞方式
+        window.msg_boxes = getattr(window, 'msg_boxes', [])
+        window.msg_boxes.append(msg_box)  # 保存引用防止垃圾回收
+        
+        # 在主线程中显示
+        msg_box.show()
+        QApplication.processEvents()  # 立即处理事件队列，确保显示
+        
+        window.log_text.append(f"已发送 {symbol} 的推送通知")
+    except Exception as e:
+        window.log_text.append(f"发送推送通知时出错: {str(e)}")
         traceback.print_exc()
 
         

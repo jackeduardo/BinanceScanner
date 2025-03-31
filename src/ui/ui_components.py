@@ -75,7 +75,7 @@ def create_settings_widget(main_window):
     main_window.update_countdown_progress_bar = main_window.auto_scan_progress_bar
     
     # 添加倒计时文本标签
-    main_window.countdown_label = QLabel("等待扫描...")
+    main_window.countdown_label = QLabel("扫描进行中...")
     main_window.countdown_label.setVisible(False)
     auto_scan_layout.addWidget(main_window.countdown_label)
     
@@ -207,6 +207,69 @@ def create_settings_widget(main_window):
     main_window.scan_interval_input.setValue(15)
     main_window.scan_interval_input.setToolTip("设置自动扫描的时间间隔，单位为分钟")
     scan_params_layout.addWidget(main_window.scan_interval_input, 3, 5)
+    
+    # 添加信号推送设置组
+    push_notify_group = QGroupBox("信号推送设置")
+    push_notify_layout = QVBoxLayout()
+    push_notify_group.setLayout(push_notify_layout)
+    
+    # 添加说明标签
+    push_notify_layout.addWidget(QLabel("添加需要推送的交易对，当任意一个交易对触发信号时，将推送所有列表中的交易对信号"))
+    
+    # 创建筛选表格的横向布局
+    filter_input_layout = QHBoxLayout()
+    
+    # 添加下拉框（而不是输入框）
+    main_window.push_symbol_combo = QComboBox()
+    main_window.push_symbol_combo.setEditable(True)  # 允许用户输入自定义币种
+    main_window.push_symbol_combo.setInsertPolicy(QComboBox.NoInsert)  # 不自动插入用户输入的内容到下拉菜单
+    main_window.push_symbol_combo.setPlaceholderText("选择或输入交易对名称，如 BTC 或 ETH")
+    main_window.push_symbol_combo.addItem('全部')  # 初始只添加"全部"选项
+    main_window.push_symbol_combo.setToolTip("从列表中选择要推送的交易对，或者手动输入")
+    filter_input_layout.addWidget(main_window.push_symbol_combo)
+    
+    # 添加按钮
+    main_window.add_push_symbol_button = QPushButton("添加")
+    main_window.add_push_symbol_button.setToolTip("添加到推送列表")
+    filter_input_layout.addWidget(main_window.add_push_symbol_button)
+    
+    # 添加布局到主布局
+    push_notify_layout.addLayout(filter_input_layout)
+    
+    # 创建推送筛选表格
+    main_window.push_symbols_table = QTableWidget(0, 2)  # 两列：交易对和删除按钮
+    main_window.push_symbols_table.setHorizontalHeaderLabels(["交易对", "操作"])
+    main_window.push_symbols_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+    main_window.push_symbols_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+    main_window.push_symbols_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+    main_window.push_symbols_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+    main_window.push_symbols_table.setMaximumHeight(150)  # 限制高度
+    push_notify_layout.addWidget(main_window.push_symbols_table)
+    
+    # 创建推送控制按钮区域
+    push_control_layout = QHBoxLayout()
+    
+    # 添加测试推送按钮
+    main_window.test_push_button = QPushButton("测试推送")
+    main_window.test_push_button.setToolTip("发送测试推送通知")
+    push_control_layout.addWidget(main_window.test_push_button)
+    
+    # 添加清空列表按钮
+    main_window.clear_push_list_button = QPushButton("清空列表")
+    main_window.clear_push_list_button.setToolTip("清空推送筛选列表")
+    push_control_layout.addWidget(main_window.clear_push_list_button)
+    
+    # 添加推送状态切换按钮
+    main_window.toggle_push_button = QPushButton("启用推送")
+    main_window.toggle_push_button.setCheckable(True)
+    main_window.toggle_push_button.setToolTip("开启或关闭信号推送")
+    push_control_layout.addWidget(main_window.toggle_push_button)
+    
+    # 添加布局到主布局
+    push_notify_layout.addLayout(push_control_layout)
+    
+    # 添加信号推送设置组到主布局
+    settings_layout.addWidget(push_notify_group)
     
     # 添加扫描参数组到布局
     settings_layout.addWidget(scan_params_group)
