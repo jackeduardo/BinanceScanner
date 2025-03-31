@@ -181,35 +181,6 @@ def create_settings_widget(main_window):
     main_window.coin_filter_combo.setInsertPolicy(QComboBox.NoInsert)  # 不自动插入用户输入的内容到下拉菜单
     scan_params_layout.addWidget(main_window.coin_filter_combo, 0, 3)
     
-    # 添加币种筛选输入和管理组件
-    filter_group = QGroupBox("币种过滤管理")
-    filter_layout = QGridLayout()
-    filter_group.setLayout(filter_layout)
-    
-    # 添加币种输入框
-    filter_layout.addWidget(QLabel("币种:"), 0, 0)
-    main_window.coin_filter_input = QLineEdit()
-    main_window.coin_filter_input.setPlaceholderText("输入币种代码，如BTC")
-    filter_layout.addWidget(main_window.coin_filter_input, 0, 1)
-    
-    # 添加币种过滤按钮
-    main_window.add_filter_button = QPushButton("添加")
-    filter_layout.addWidget(main_window.add_filter_button, 0, 2)
-    
-    main_window.remove_filter_button = QPushButton("删除")
-    filter_layout.addWidget(main_window.remove_filter_button, 0, 3)
-    
-    main_window.clear_filter_button = QPushButton("清空")
-    filter_layout.addWidget(main_window.clear_filter_button, 0, 4)
-    
-    # 添加币种过滤列表
-    main_window.coin_filter_list = QListWidget()
-    main_window.coin_filter_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
-    filter_layout.addWidget(main_window.coin_filter_list, 1, 0, 1, 5)
-    
-    # 添加币种过滤组到扫描参数布局
-    scan_params_layout.addWidget(filter_group, 2, 0, 1, 5)
-    
     # 添加永续合约过滤复选框
     main_window.perpetual_only_checkbox = QCheckBox("只显示永续合约")
     main_window.perpetual_only_checkbox.setChecked(True)  # 默认勾选
@@ -255,7 +226,13 @@ def create_settings_widget(main_window):
     
     # 操作按钮 - 移除测试连接按钮
     main_window.connect_button = QPushButton("连接到交易所")
+    main_window.connect_button.setToolTip("连接到交易所并获取交易对列表")
     operation_layout.addWidget(main_window.connect_button, 0, 0)
+    
+    # 清理缓存按钮
+    main_window.clear_cache_button = QPushButton("清理K线缓存")
+    main_window.clear_cache_button.setToolTip("清理K线数据缓存和无效交易对列表，解决连接问题")
+    operation_layout.addWidget(main_window.clear_cache_button, 0, 1)
     
     # 第二行按钮
     main_window.scan_long_button = QPushButton("扫描做多信号")
@@ -300,21 +277,36 @@ def create_results_widget(main_window):
     long_signals_widget = QWidget()
     long_signals_layout = QVBoxLayout(long_signals_widget)
     
-    # 添加做多信号标签
-    long_signals_layout.addWidget(QLabel("做多信号:"))
+    # 添加做多信号标签和清除按钮
+    long_header_layout = QHBoxLayout()
+    long_header_layout.addWidget(QLabel("做多信号:"))
+    
+    # 添加清除做多信号按钮
+    main_window.clear_long_signals_button = QPushButton("清除全部")
+    main_window.clear_long_signals_button.setToolTip("清除所有做多信号记录")
+    long_header_layout.addWidget(main_window.clear_long_signals_button)
+    long_signals_layout.addLayout(long_header_layout)
     
     # 初始化做多信号表格
-    main_window.long_signals_table = QTableWidget(0, 6)
-    main_window.long_signals_table.setHorizontalHeaderLabels(["交易对", "价格", "MA7", "MA25", "MA99", "链接"])
+    main_window.long_signals_table = QTableWidget(0, 7)  # 增加一列用于删除按钮
+    main_window.long_signals_table.setHorizontalHeaderLabels(["交易对", "价格", "MA7", "MA25", "MA99", "链接", "操作"])
     main_window.long_signals_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
     main_window.long_signals_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
     main_window.long_signals_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)
+    main_window.long_signals_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeToContents)
     main_window.long_signals_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
     main_window.long_signals_table.setSelectionBehavior(QAbstractItemView.SelectRows)
     long_signals_layout.addWidget(main_window.long_signals_table)
     
-    # 添加做多信号日志标签
-    long_signals_layout.addWidget(QLabel("做多信号日志:"))
+    # 添加做多信号日志标签和清除按钮
+    long_log_header_layout = QHBoxLayout()
+    long_log_header_layout.addWidget(QLabel("做多信号日志:"))
+    
+    # 添加清除做多信号日志按钮
+    main_window.clear_long_log_button = QPushButton("清除日志")
+    main_window.clear_long_log_button.setToolTip("清除做多信号日志")
+    long_log_header_layout.addWidget(main_window.clear_long_log_button)
+    long_signals_layout.addLayout(long_log_header_layout)
     
     # 添加做多信号日志区域
     main_window.long_signals_log = QTextEdit()
@@ -328,21 +320,36 @@ def create_results_widget(main_window):
     short_signals_widget = QWidget()
     short_signals_layout = QVBoxLayout(short_signals_widget)
     
-    # 添加做空信号标签
-    short_signals_layout.addWidget(QLabel("做空信号:"))
+    # 添加做空信号标签和清除按钮
+    short_header_layout = QHBoxLayout()
+    short_header_layout.addWidget(QLabel("做空信号:"))
+    
+    # 添加清除做空信号按钮
+    main_window.clear_short_signals_button = QPushButton("清除全部")
+    main_window.clear_short_signals_button.setToolTip("清除所有做空信号记录")
+    short_header_layout.addWidget(main_window.clear_short_signals_button)
+    short_signals_layout.addLayout(short_header_layout)
     
     # 初始化做空信号表格
-    main_window.short_signals_table = QTableWidget(0, 6)
-    main_window.short_signals_table.setHorizontalHeaderLabels(["交易对", "价格", "MA7", "MA25", "MA99", "链接"])
+    main_window.short_signals_table = QTableWidget(0, 7)  # 增加一列用于删除按钮
+    main_window.short_signals_table.setHorizontalHeaderLabels(["交易对", "价格", "MA7", "MA25", "MA99", "链接", "操作"])
     main_window.short_signals_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
     main_window.short_signals_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
     main_window.short_signals_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)
+    main_window.short_signals_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeToContents)
     main_window.short_signals_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
     main_window.short_signals_table.setSelectionBehavior(QAbstractItemView.SelectRows)
     short_signals_layout.addWidget(main_window.short_signals_table)
     
-    # 添加做空信号日志标签
-    short_signals_layout.addWidget(QLabel("做空信号日志:"))
+    # 添加做空信号日志标签和清除按钮
+    short_log_header_layout = QHBoxLayout()
+    short_log_header_layout.addWidget(QLabel("做空信号日志:"))
+    
+    # 添加清除做空信号日志按钮
+    main_window.clear_short_log_button = QPushButton("清除日志")
+    main_window.clear_short_log_button.setToolTip("清除做空信号日志")
+    short_log_header_layout.addWidget(main_window.clear_short_log_button)
+    short_signals_layout.addLayout(short_log_header_layout)
     
     # 添加做空信号日志区域
     main_window.short_signals_log = QTextEdit()

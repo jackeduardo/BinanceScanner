@@ -36,6 +36,9 @@ def generate_trade_url(exchange, symbol, is_short=False):
         print(f"生成交易URL时出错: {str(e)}")
         return f"https://www.google.com/search?q={symbol}+price+chart"
 
+# 为了向后兼容，添加generate_url作为generate_trade_url的别名
+generate_url = generate_trade_url
+
 def get_exchange_url(exchange_id, symbol, is_short=False):
     """
     根据交易所ID和交易对生成交易URL（兼容旧接口）

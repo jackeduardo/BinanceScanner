@@ -8,15 +8,16 @@ import time
 import logging
 import traceback
 from datetime import datetime, timedelta
-from PyQt5.QtCore import QUrl, QTimer, QObject
-from PyQt5.QtWidgets import QFileDialog, QTableWidgetItem, QPushButton
+from PyQt5.QtCore import QUrl, QTimer, QObject, Qt
+from PyQt5.QtWidgets import QFileDialog, QTableWidgetItem, QPushButton, QMessageBox, QApplication
 from PyQt5.QtGui import QDesktopServices
 
 from src.utils.config import load_config_from_file, save_config_to_file
-from src.utils.exchange_utils import get_exchange_instance, setup_exchange
-from src.utils.url_generator import generate_trade_url
+from src.utils.exchange_utils import get_exchange_instance, setup_exchange, get_exchange_id
+from src.utils.url_generator import generate_trade_url, generate_binance_url, generate_url
 from src.utils.market_utils import get_market_symbols
 from src.scanner.scanner_pool import ScannerPool
+from src.scanner.scanner_thread import clear_ohlcv_cache, clear_invalid_symbols
 
 def setup_event_handlers(window):
     """设置UI组件的事件处理"""
@@ -29,17 +30,19 @@ def setup_event_handlers(window):
     window.apply_api_button.clicked.connect(lambda: apply_api_settings(window))
     window.save_api_button.clicked.connect(lambda: save_api_settings(window))
     
-    # 连接币种过滤器
-    window.add_filter_button.clicked.connect(lambda: add_coin_filter(window))
-    window.remove_filter_button.clicked.connect(lambda: remove_coin_filter(window))
-    window.clear_filter_button.clicked.connect(lambda: clear_coin_filter(window))
-    
     # 连接交易所变更事件
     window.exchange_combo.currentTextChanged.connect(lambda: exchange_changed(window))
     window.market_type_combo.currentTextChanged.connect(lambda: market_type_changed(window))
     
-    # 只连接"连接到交易所"按钮
+    # 连接按钮
     window.connect_button.clicked.connect(lambda: connect_to_exchange(window))
+    window.clear_cache_button.clicked.connect(lambda: clear_cache(window))
+    
+    # 连接清除信号表和日志的按钮
+    window.clear_long_signals_button.clicked.connect(lambda: clear_signals_table(window, True))
+    window.clear_short_signals_button.clicked.connect(lambda: clear_signals_table(window, False))
+    window.clear_long_log_button.clicked.connect(lambda: clear_signals_log(window, True))
+    window.clear_short_log_button.clicked.connect(lambda: clear_signals_log(window, False))
 
 def auto_connect(window):
     """自动连接到交易所"""
@@ -68,18 +71,28 @@ def exchange_changed(window):
     market_type_changed(window)
 
 def market_type_changed(window):
-    """处理市场类型变更事件"""
-    # 更新永续合约选择框的可见性
-    current_market = window.market_type_combo.currentText()
-    if "期货" in current_market:
-        window.perpetual_only_checkbox.setVisible(True)
-        window.perpetual_only_label.setVisible(True)
-    else:
-        window.perpetual_only_checkbox.setVisible(False)
-        window.perpetual_only_label.setVisible(False)
-    
-    # 尝试更新市场数据
-    update_market_data(window)
+    """市场类型变更事件处理"""
+    try:
+        market_type = window.market_type_combo.currentText()
+        window.log_text.append(f"市场类型已更改为: {market_type}")
+        
+        # 更新永续合约选择框的可见性
+        if "期货" in market_type:
+            window.perpetual_only_checkbox.setVisible(True)
+            window.perpetual_only_label.setVisible(True)
+        else:
+            window.perpetual_only_checkbox.setVisible(False)
+            window.perpetual_only_label.setVisible(False)
+        
+        # 标记已经改变，需要重新连接
+        if hasattr(window, 'is_connected') and window.is_connected:
+            window.is_connected = False
+            window.connection_status_label.setText("未连接")
+            window.connection_status_label.setStyleSheet("color: red;")
+            window.log_text.append("请重新连接交易所")
+    except Exception as e:
+        window.log_text.append(f"市场类型变更处理出错: {str(e)}")
+        traceback.print_exc()
 
 def update_market_data(window):
     """更新市场数据"""
@@ -286,8 +299,10 @@ def connect_to_exchange(window):
             perpetual_only = window.perpetual_only_checkbox.isChecked()
             window.symbols = get_market_symbols(exchange, market_type, perpetual_only)
             
-            # 更新币种过滤列表
+            # 更新币种筛选下拉框
             update_coin_filter_list(window)
+            
+            window.log_text.append("连接交易所成功，已自动更新可用币种列表")
             
             return True
         except Exception as e:
@@ -319,50 +334,21 @@ def save_api_settings(window):
     except Exception as e:
         window.log_text.append(f"保存API设置时出错: {str(e)}")
 
-def add_coin_filter(window):
-    """添加币种到过滤列表"""
-    try:
-        # 获取输入的币种
-        coin = window.coin_filter_input.text().strip().upper()
-        if not coin:
-            return
-        
-        # 检查币种是否已在列表中
-        if coin not in window.coin_filter_list.findItems(coin, Qt.MatchExactly):
-            window.coin_filter_list.addItem(coin)
-            window.coin_filter_input.clear()
-    except Exception as e:
-        window.log_text.append(f"添加币种过滤器时出错: {str(e)}")
-
-def remove_coin_filter(window):
-    """从过滤列表中删除选中的币种"""
-    try:
-        # 获取选中的项
-        selected_items = window.coin_filter_list.selectedItems()
-        if not selected_items:
-            return
-        
-        # 删除选中的项
-        for item in selected_items:
-            window.coin_filter_list.takeItem(window.coin_filter_list.row(item))
-    except Exception as e:
-        window.log_text.append(f"删除币种过滤器时出错: {str(e)}")
-
-def clear_coin_filter(window):
-    """清空币种过滤列表"""
-    try:
-        window.coin_filter_list.clear()
-    except Exception as e:
-        window.log_text.append(f"清空币种过滤器时出错: {str(e)}")
-
 def update_coin_filter_list(window):
-    """更新币种过滤列表控件"""
+    """更新币种筛选下拉框"""
     try:
-        # 清空现有列表
-        window.coin_filter_list.clear()
+        # 保存当前选中的值
+        current_text = window.coin_filter_combo.currentText()
+        
+        # 清空现有下拉选项
+        window.coin_filter_combo.clear()
+        
+        # 添加"全部"选项
+        window.coin_filter_combo.addItem("全部")
         
         # 如果没有可用的交易对，直接返回
         if not hasattr(window, 'symbols') or not window.symbols:
+            window.coin_filter_combo.setCurrentText(current_text)
             return
         
         # 提取所有币种
@@ -373,30 +359,45 @@ def update_coin_filter_list(window):
                 base_coin = symbol.split('/')[0]
                 coins.add(base_coin)
         
-        # 添加到列表控件
+        # 添加到下拉框
         for coin in sorted(coins):
-            window.coin_filter_list.addItem(coin)
+            window.coin_filter_combo.addItem(coin)
+        
+        # 尝试恢复之前的选择，如果不存在则选择"全部"
+        index = window.coin_filter_combo.findText(current_text)
+        if index >= 0:
+            window.coin_filter_combo.setCurrentIndex(index)
+        else:
+            window.coin_filter_combo.setCurrentText("全部")
+            
+        window.log_text.append(f"已更新币种列表，共 {len(coins)} 个币种")
     except Exception as e:
-        window.log_text.append(f"更新币种过滤列表时出错: {str(e)}")
+        window.log_text.append(f"更新币种筛选列表时出错: {str(e)}")
+        traceback.print_exc()
 
 def get_filtered_symbols(window):
-    """根据过滤器获取符合条件的交易对"""
+    """根据筛选器获取符合条件的交易对"""
     try:
         # 如果没有可用的交易对，直接返回空列表
         if not hasattr(window, 'symbols') or not window.symbols:
             window.log_text.append("没有可用的交易对")
             return []
         
-        # 获取选择的币种过滤器
-        selected_items = window.coin_filter_list.selectedItems()
-        selected_coins = [item.text() for item in selected_items]
+        # 获取选择的币种筛选
+        selected_coin = window.coin_filter_combo.currentText()
         
-        # 如果没有选择币种，使用所有交易对
-        if not selected_coins:
+        # 如果选择"全部"，使用所有交易对
+        if selected_coin == "全部":
             window.log_text.append(f"使用所有 {len(window.symbols)} 个交易对进行扫描")
             return window.symbols
         
-        # 根据选择的币种过滤交易对
+        # 支持多个币种筛选，用逗号分隔
+        if "," in selected_coin:
+            selected_coins = [coin.strip().upper() for coin in selected_coin.split(",")]
+        else:
+            selected_coins = [selected_coin.strip().upper()]
+        
+        # 根据选择的币种筛选交易对
         filtered_symbols = []
         for symbol in window.symbols:
             for coin in selected_coins:
@@ -405,9 +406,13 @@ def get_filtered_symbols(window):
                     break
         
         window.log_text.append(f"已选择 {len(filtered_symbols)}/{len(window.symbols)} 个交易对进行扫描")
+        if len(filtered_symbols) == 0:
+            window.log_text.append("警告: 没有找到匹配的交易对，请检查币种名称是否正确")
+        
         return filtered_symbols
     except Exception as e:
-        window.log_text.append(f"过滤交易对时出错: {str(e)}")
+        window.log_text.append(f"筛选交易对时出错: {str(e)}")
+        traceback.print_exc()
         return []
 
 def scan_long_signals(window):
@@ -435,8 +440,8 @@ def scan_long_signals(window):
         
         # 创建并启动新的扫描池
         window.long_scanner_pool = ScannerPool(
-            window.exchange,
-            symbols,
+            window.exchange, 
+            symbols, 
             is_long=True,
             timeframe=timeframe,
             window=window
@@ -486,8 +491,8 @@ def scan_short_signals(window):
         
         # 创建并启动新的扫描池
         window.short_scanner_pool = ScannerPool(
-            window.exchange,
-            symbols,
+            window.exchange, 
+            symbols, 
             is_long=False,
             timeframe=timeframe,
             window=window
@@ -555,7 +560,7 @@ def handle_scan_completed(window, is_long=True):
                     
                     # 启动倒计时更新计时器
                     window.countdown_timer.start(1000)  # 每秒更新一次
-                
+        
     except Exception as e:
         window.log_text.append(f"处理扫描完成事件时出错: {str(e)}")
         traceback.print_exc()
@@ -635,7 +640,7 @@ def handle_signal_found(window, symbol, data, is_long=None):
         table.insertRow(row_position)
         
         # 添加数据到表格 - 注意列的顺序应该与表头定义一致
-        # ["交易对", "价格", "MA7", "MA25", "MA99", "链接"]
+        # ["交易对", "价格", "MA7", "MA25", "MA99", "链接", "操作"]
         table.setItem(row_position, 0, QTableWidgetItem(symbol))
         table.setItem(row_position, 1, QTableWidgetItem(f"{price:.4f}"))
         table.setItem(row_position, 2, QTableWidgetItem(f"{ma7:.4f}"))
@@ -646,6 +651,11 @@ def handle_signal_found(window, symbol, data, is_long=None):
         view_button = QPushButton("查看")
         view_button.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(url)))
         table.setCellWidget(row_position, 5, view_button)
+        
+        # 添加删除按钮
+        delete_button = QPushButton("删除")
+        delete_button.clicked.connect(lambda: remove_signal_row(window, table, row_position))
+        table.setCellWidget(row_position, 6, delete_button)
         
         # 添加到相应的日志框中
         log_text = f"{symbol} - 价格: {price:.4f}, MA7: {ma7:.4f}, MA25: {ma25:.4f}, 时间: {timestamp}"
@@ -741,7 +751,7 @@ def stop_automatic_scanning(window):
         
         # 重置自动扫描状态
         window.auto_scanning = False
-        window.start_scan_button.setText("开始自动扫描")
+            window.start_scan_button.setText("开始自动扫描")
         
         # 恢复按钮状态
         window.scan_long_button.setEnabled(True)
@@ -756,8 +766,8 @@ def stop_automatic_scanning(window):
         window.short_progress_bar.setValue(0)
         window.update_countdown_progress_bar.setValue(0)
         
-        window.log_text.append("自动扫描已停止")
-        
+            window.log_text.append("自动扫描已停止")
+            
     except Exception as e:
         window.log_text.append(f"停止自动扫描时出错: {str(e)}")
         traceback.print_exc()
@@ -849,8 +859,8 @@ def long_scan_completed_in_auto_mode(window):
         
         # 创建并启动短线扫描
         window.short_scanner_pool = ScannerPool(
-            window.exchange,
-            symbols,
+            window.exchange, 
+            symbols, 
             is_long=False,
             timeframe=timeframe,
             window=window
@@ -896,7 +906,7 @@ def update_countdown(window):
         # 如果倒计时结束，停止计时器
         if window.countdown_remaining <= 0:
             window.countdown_timer.stop()
-            
+        
     except Exception as e:
         print(f"更新倒计时时出错: {str(e)}")
         traceback.print_exc()
@@ -925,5 +935,89 @@ def handle_close_event(window, event):
         print(f"关闭窗口时出错: {str(e)}")
         traceback.print_exc()
         event.accept()  # 确保窗口能够关闭
+
+def clear_cache(window):
+    """清理K线数据缓存和无效交易对列表"""
+    try:
+        # 清理K线缓存和无效交易对
+        cache_size = clear_ohlcv_cache()
+        invalid_symbols_size = clear_invalid_symbols()
+        
+        # 记录日志
+        log_message = f"已清理K线缓存 ({cache_size} 条数据) 和无效交易对列表 ({invalid_symbols_size} 个交易对)"
+        window.log_text.append(log_message)
+        print(log_message)
+        
+        # 显示成功消息
+        QMessageBox.information(window, "清理成功", log_message)
+        
+    except Exception as e:
+        error_message = f"清理缓存时出错: {str(e)}"
+        window.log_text.append(error_message)
+        print(error_message)
+        traceback.print_exc()
+
+def clear_signals_table(window, is_long=True):
+    """清除信号表格"""
+    try:
+        table = window.long_signals_table if is_long else window.short_signals_table
+        signal_type = "做多" if is_long else "做空"
+        
+        # 确认对话框
+        reply = QMessageBox.question(
+            window, 
+            "确认清除", 
+            f"确定要清除所有{signal_type}信号记录吗？",
+            QMessageBox.Yes | QMessageBox.No, 
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            # 清空表格
+            table.setRowCount(0)
+            window.log_text.append(f"已清除所有{signal_type}信号记录")
+    except Exception as e:
+        window.log_text.append(f"清除{signal_type}信号表格时出错: {str(e)}")
+        traceback.print_exc()
+
+def clear_signals_log(window, is_long=True):
+    """清除信号日志"""
+    try:
+        log = window.long_signals_log if is_long else window.short_signals_log
+        signal_type = "做多" if is_long else "做空"
+        
+        # 确认对话框
+        reply = QMessageBox.question(
+            window, 
+            "确认清除", 
+            f"确定要清除{signal_type}信号日志吗？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            # 清空日志
+            log.clear()
+            window.log_text.append(f"已清除{signal_type}信号日志")
+    except Exception as e:
+        window.log_text.append(f"清除{signal_type}信号日志时出错: {str(e)}")
+        traceback.print_exc()
+
+def remove_signal_row(window, table, row):
+    """删除信号表格中的一行"""
+    try:
+        if 0 <= row < table.rowCount():
+            # 获取交易对名称，用于日志记录
+            symbol = table.item(row, 0).text()
+            
+            # 删除行
+            table.removeRow(row)
+            
+            # 记录日志
+            signal_type = "做多" if table == window.long_signals_table else "做空"
+            window.log_text.append(f"已删除{signal_type}信号记录: {symbol}")
+    except Exception as e:
+        window.log_text.append(f"删除信号记录时出错: {str(e)}")
+        traceback.print_exc()
 
         
