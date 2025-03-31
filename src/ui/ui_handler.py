@@ -429,11 +429,20 @@ def scan_long_signals(window):
             window.log_text.append("没有符合条件的交易对")
             return
         
-        # 获取选择的时间周期
+        # 获取选择的时间周期和K线数量
         timeframe = window.timeframe_combo.currentText()
+        candle_count = window.candle_count_input.value()
+        
+        # 获取线程数
+        thread_count = min(20, max(8, len(symbols) // 50))  # 根据交易对数量动态调整线程数
         
         # 创建扫描线程池
-        window.log_text.append(f"开始扫描做多信号，时间周期: {timeframe}，交易对数量: {len(symbols)}")
+        window.log_text.append(f"开始扫描做多信号，时间周期: {timeframe}，交易对数量: {len(symbols)}，线程数: {thread_count}")
+        
+        # 更新UI
+        window.long_progress_bar.setVisible(True)
+        window.long_progress_bar.setValue(0)
+        window.long_progress_label.setText(f"0/{len(symbols)} (0%)")
         
         # 停止之前的扫描（如果有）
         stop_current_scans(window)
@@ -444,7 +453,8 @@ def scan_long_signals(window):
             symbols, 
             is_long=True,
             timeframe=timeframe,
-            window=window
+            window=window,
+            threads=thread_count
         )
         
         # 连接信号
@@ -480,11 +490,20 @@ def scan_short_signals(window):
             window.log_text.append("没有符合条件的交易对")
             return
         
-        # 获取选择的时间周期
+        # 获取选择的时间周期和K线数量
         timeframe = window.timeframe_combo.currentText()
+        candle_count = window.candle_count_input.value()
+        
+        # 获取线程数
+        thread_count = min(20, max(8, len(symbols) // 50))  # 根据交易对数量动态调整线程数
         
         # 创建扫描线程池
-        window.log_text.append(f"开始扫描做空信号，时间周期: {timeframe}，交易对数量: {len(symbols)}")
+        window.log_text.append(f"开始扫描做空信号，时间周期: {timeframe}，交易对数量: {len(symbols)}，线程数: {thread_count}")
+        
+        # 更新UI
+        window.short_progress_bar.setVisible(True)
+        window.short_progress_bar.setValue(0)
+        window.short_progress_label.setText(f"0/{len(symbols)} (0%)")
         
         # 停止之前的扫描（如果有）
         stop_current_scans(window)
@@ -495,7 +514,8 @@ def scan_short_signals(window):
             symbols, 
             is_long=False,
             timeframe=timeframe,
-            window=window
+            window=window,
+            threads=thread_count
         )
         
         # 连接信号
@@ -520,8 +540,14 @@ def scan_short_signals(window):
 def handle_scan_completed(window, is_long=True):
     """处理扫描完成事件"""
     try:
+        from src.scanner.scanner_thread import OHLCV_CACHE
+        
+        # 获取缓存大小
+        cache_size = len(OHLCV_CACHE)
+        cache_mb = sum(len(str(v)) for v in OHLCV_CACHE.values()) / (1024 * 1024)
+        
         if is_long:
-            window.log_text.append("做多信号扫描完成")
+            window.log_text.append(f"做多信号扫描完成，当前缓存大小: {cache_size} 条记录 (约 {cache_mb:.2f} MB)")
             window.scanning_long_label.setVisible(False)
             
             # 如果短线扫描也不在运行，则重新启用按钮
@@ -530,7 +556,7 @@ def handle_scan_completed(window, is_long=True):
                 window.scan_short_button.setEnabled(True)
                 window.start_scan_button.setEnabled(True)
         else:
-            window.log_text.append("做空信号扫描完成")
+            window.log_text.append(f"做空信号扫描完成，当前缓存大小: {cache_size} 条记录 (约 {cache_mb:.2f} MB)")
             window.scanning_short_label.setVisible(False)
             
             # 如果长线扫描也不在运行，则重新启用按钮
@@ -541,25 +567,17 @@ def handle_scan_completed(window, is_long=True):
                 
         # 处理自动扫描的完成
         if hasattr(window, 'auto_scanning') and window.auto_scanning:
-            # 如果是最后一次扫描，重置自动扫描状态
-            if hasattr(window, 'auto_scan_count'):
-                window.auto_scan_count += 1
-                remaining = window.auto_scan_total - window.auto_scan_count
-                
-                if remaining <= 0:
-                    stop_automatic_scanning(window)
-                    window.log_text.append("自动扫描完成")
-                else:
-                    # 启动下一次自动扫描的倒计时
-                    window.auto_scan_timer.start(window.auto_scan_interval * 1000)
-                    window.log_text.append(f"将在 {window.auto_scan_interval} 秒后进行下一次扫描，剩余 {remaining} 次")
-                    
-                    # 更新倒计时进度条初始值
-                    window.countdown_remaining = window.auto_scan_interval
-                    window.update_countdown_progress_bar.setValue(100)  # 初始值100%
-                    
-                    # 启动倒计时更新计时器
-                    window.countdown_timer.start(1000)  # 每秒更新一次
+            # 启动下一次自动扫描的倒计时
+            window.auto_scan_timer.start(window.auto_scan_interval * 1000)
+            minutes = window.auto_scan_interval // 60
+            window.log_text.append(f"将在 {minutes} 分钟后进行下一次扫描")
+            
+            # 更新倒计时进度条初始值
+            window.countdown_remaining = window.auto_scan_interval
+            window.update_countdown_progress_bar.setValue(100)  # 初始值100%
+            
+            # 启动倒计时更新计时器
+            window.countdown_timer.start(1000)  # 每秒更新一次
         
     except Exception as e:
         window.log_text.append(f"处理扫描完成事件时出错: {str(e)}")
@@ -689,16 +707,12 @@ def start_scanning(window):
         
         # 获取扫描参数
         timeframe = window.timeframe_combo.currentText()
-        scan_interval = int(window.auto_scan_interval_input.text())
-        scan_count = int(window.auto_scan_count_input.text())
+        scan_interval_minutes = int(window.scan_interval_input.value())
+        scan_interval_seconds = scan_interval_minutes * 60  # 转换为秒
         
         # 验证参数
-        if scan_interval < 10:
-            window.log_text.append("自动扫描间隔不能小于10秒")
-            return
-        
-        if scan_count < 1:
-            window.log_text.append("自动扫描次数不能小于1次")
+        if scan_interval_minutes < 1:
+            window.log_text.append("自动扫描间隔不能小于1分钟")
             return
         
         # 停止当前正在进行的任何扫描
@@ -706,9 +720,7 @@ def start_scanning(window):
         
         # 设置自动扫描状态
         window.auto_scanning = True
-        window.auto_scan_interval = scan_interval
-        window.auto_scan_count = 0
-        window.auto_scan_total = scan_count
+        window.auto_scan_interval = scan_interval_seconds
         
         # 更新按钮文本
         window.start_scan_button.setText("停止自动扫描")
@@ -716,6 +728,10 @@ def start_scanning(window):
         # 禁用其他扫描按钮
         window.scan_long_button.setEnabled(False)
         window.scan_short_button.setEnabled(False)
+        
+        # 显示倒计时进度条和标签
+        window.auto_scan_progress_bar.setVisible(True)
+        window.countdown_label.setVisible(True)
         
         # 创建自动扫描计时器
         window.auto_scan_timer = QTimer()
@@ -727,7 +743,7 @@ def start_scanning(window):
         window.countdown_remaining = 0
         
         # 立即执行第一次扫描
-        window.log_text.append(f"开始自动扫描，每 {scan_interval} 秒扫描一次，共 {scan_count} 次")
+        window.log_text.append(f"开始自动扫描，每 {scan_interval_minutes} 分钟扫描一次")
         perform_auto_scan(window)
         
     except Exception as e:
@@ -751,7 +767,11 @@ def stop_automatic_scanning(window):
         
         # 重置自动扫描状态
         window.auto_scanning = False
-            window.start_scan_button.setText("开始自动扫描")
+        window.start_scan_button.setText("开始自动扫描")
+        
+        # 隐藏倒计时进度条和标签
+        window.auto_scan_progress_bar.setVisible(False)
+        window.countdown_label.setVisible(False)
         
         # 恢复按钮状态
         window.scan_long_button.setEnabled(True)
@@ -766,8 +786,8 @@ def stop_automatic_scanning(window):
         window.short_progress_bar.setValue(0)
         window.update_countdown_progress_bar.setValue(0)
         
-            window.log_text.append("自动扫描已停止")
-            
+        window.log_text.append("自动扫描已停止")
+        
     except Exception as e:
         window.log_text.append(f"停止自动扫描时出错: {str(e)}")
         traceback.print_exc()
@@ -812,9 +832,7 @@ def perform_auto_scan(window):
         timeframe = window.timeframe_combo.currentText()
         
         # 记录扫描开始
-        scan_no = window.auto_scan_count + 1
-        scan_total = window.auto_scan_total
-        window.log_text.append(f"开始第 {scan_no}/{scan_total} 次自动扫描，时间周期: {timeframe}")
+        window.log_text.append(f"开始自动扫描，时间周期: {timeframe}")
         
         # 创建并启动长线扫描
         window.long_scanner_pool = ScannerPool(
@@ -891,16 +909,20 @@ def update_countdown(window):
         # 减少剩余时间
         window.countdown_remaining -= 1
         
-        # 计算百分比
-        percentage = int((window.countdown_remaining / window.auto_scan_interval) * 100)
+        # 计算百分比 - 反向计算，从0%到100%
+        elapsed_time = window.auto_scan_interval - window.countdown_remaining
+        percentage = int((elapsed_time / window.auto_scan_interval) * 100)
         
-        # 更新进度条
-        window.update_countdown_progress_bar.setValue(percentage)
-        
-        # 更新倒计时文本
+        # 计算剩余分钟和秒数
         minutes = window.countdown_remaining // 60
         seconds = window.countdown_remaining % 60
         time_str = f"{minutes:02d}:{seconds:02d}"
+        
+        # 更新进度条
+        window.update_countdown_progress_bar.setValue(percentage)
+        window.update_countdown_progress_bar.setFormat(f"{percentage}% (剩余{minutes}分{seconds}秒)")
+        
+        # 更新倒计时文本
         window.countdown_label.setText(f"下次扫描倒计时: {time_str}")
         
         # 如果倒计时结束，停止计时器

@@ -208,14 +208,6 @@ def create_settings_widget(main_window):
     main_window.scan_interval_input.setToolTip("设置自动扫描的时间间隔，单位为分钟")
     scan_params_layout.addWidget(main_window.scan_interval_input, 3, 5)
     
-    # 添加自动扫描次数设置
-    scan_params_layout.addWidget(QLabel("自动扫描次数:"), 4, 4)
-    main_window.auto_scan_count_input = QSpinBox()
-    main_window.auto_scan_count_input.setRange(1, 100)
-    main_window.auto_scan_count_input.setValue(10)
-    main_window.auto_scan_count_input.setToolTip("设置自动扫描的次数，设为0表示不限次数")
-    scan_params_layout.addWidget(main_window.auto_scan_count_input, 4, 5)
-    
     # 添加扫描参数组到布局
     settings_layout.addWidget(scan_params_group)
     

@@ -165,34 +165,39 @@ class ScannerThread(QThread):
             # 发送初始进度更新
             self.progress_updated.emit(processed, total)
             
+            # 多个交易对的批量结果
+            results = {}
+            
+            # 并行获取OHLCV数据
+            ohlcv_data = {}
             for symbol in self.symbols:
                 if self.should_terminate:
                     print(f"线程已被要求终止，跳过剩余交易对")
                     break
                 
+                # 检查交易对是否无效
+                if is_symbol_invalid(symbol):
+                    print(f"跳过无效交易对 {symbol}")
+                    processed += 1
+                    self.progress_updated.emit(processed, total)
+                    continue
+                
+                # 获取K线数据
+                ohlcv = get_ohlcv_with_cache(self.exchange, symbol, self.timeframe, limit=500)
+                if ohlcv:
+                    ohlcv_data[symbol] = ohlcv
+            
+            # 创建DataFrame并检测信号
+            for symbol, ohlcv in ohlcv_data.items():
+                if self.should_terminate:
+                    break
+                
                 try:
-                    # 检查交易对是否无效
-                    if is_symbol_invalid(symbol):
-                        print(f"跳过无效交易对 {symbol}")
-                        processed += 1
-                        self.progress_updated.emit(processed, total)
-                        continue
-                    
-                    # 使用带缓存的方法获取OHLCV数据
-                    ohlcv = get_ohlcv_with_cache(self.exchange, symbol, self.timeframe, limit=500)
-                    
-                    # 如果获取数据失败，跳过此交易对
-                    if not ohlcv:
-                        print(f"交易对 {symbol} 获取数据失败，跳过")
-                        processed += 1
-                        self.progress_updated.emit(processed, total)
-                        continue
-                    
                     # 转换OHLCV数据为DataFrame
                     df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
                     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
                     
-                    # 计算移动平均线
+                    # 计算移动平均线 - 一次性计算所有指标
                     df['ma7'] = df['close'].rolling(window=7).mean()
                     df['ma25'] = df['close'].rolling(window=25).mean()
                     df['ma99'] = df['close'].rolling(window=99).mean()
@@ -225,7 +230,6 @@ class ScannerThread(QThread):
                         "Unknown symbol",
                         "Invalid symbol"
                     ]):
-                        print(f"将交易对标记为无效: {symbol}")
                         mark_symbol_as_invalid(symbol)
                     
                     traceback.print_exc()
